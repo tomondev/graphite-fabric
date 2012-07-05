@@ -9,7 +9,10 @@ To execute:
     * run `fab graphite_install -H root@{hostname}` 
       (hostname should be the name of a virtual server you're installing onto)
 
-It might prompt you for the root password on the host you are trying to instal onto.
+NOTE (tomondev, 2012-07-05): adopted to install a new site on an existing nginx, execute
+fab graphite_install:site={virtualhost.com} -H {sudo_user}@{hostname}
+
+It might prompt you for the root or sudo password on the host you are trying to instal onto.
 
 Best to execute this on a clean virtual machine running Debian 6 (Squeeze). 
 Also tested successfully on Ubuntu 12.04 VPS.
@@ -18,6 +21,10 @@ Also tested successfully on Ubuntu 12.04 VPS.
 
 from fabric.api import cd, sudo, run, put, settings
 
+import logging
+FORMAT="%(name)s %(funcName)s:%(lineno)d %(message)s"
+logging.basicConfig(format=FORMAT, level=logging.INFO)
+
 def _check_sudo():
     with settings(warn_only=True):
         result = sudo('pwd')
@@ -25,7 +32,7 @@ def _check_sudo():
             print "Trying to install sudo. Must be root"
             run('apt-get update && apt-get install -y sudo')  
 
-def graphite_install():
+def graphite_install(site=''):
     """
     Installs Graphite and dependencies
     """
@@ -48,17 +55,9 @@ def graphite_install():
         sudo('wget ftp://ftp.csx.cam.ac.uk/pub/software/programming/pcre/pcre-8.30.tar.gz')
         sudo('tar -zxvf pcre-8.30.tar.gz')
 
-    # creating nginx etc and log folders
-    sudo('mkdir -p /etc/nginx')
-    sudo('mkdir -p /var/log/nginx')
-    sudo('chown -R www-data: /var/log/nginx')
-
-    # creating automatic startup scripts for nginx and carbon
-    put('config/nginx', '/etc/init.d/', use_sudo=True)
+    # creating automatic startup scripts for carbon
     put('config/carbon', '/etc/init.d/', use_sudo=True)
-    sudo('chmod ugo+x /etc/init.d/nginx')
     sudo('chmod ugo+x /etc/init.d/carbon')
-    sudo('cd /etc/init.d && update-rc.d nginx defaults')
     sudo('cd /etc/init.d && update-rc.d carbon defaults')
 
     # installing uwsgi from source
@@ -71,18 +70,14 @@ def graphite_install():
         sudo('cp uwsgi /usr/local/bin/')
         sudo('cp nginx/uwsgi_params /etc/nginx/')
 
-    # downloading nginx source
-    with cd('/usr/local/src'):
-        sudo('wget http://nginx.org/download/nginx-1.2.0.tar.gz')
-        sudo('tar -zxvf nginx-1.2.0.tar.gz')
-
-    # installing nginx
-    with cd('/usr/local/src/nginx-1.2.0'):
-        sudo('./configure --prefix=/usr/local --with-pcre=/usr/local/src/pcre-8.30/ --with-http_ssl_module --with-http_gzip_static_module --conf-path=/etc/nginx/nginx.conf --pid-path=/var/run/nginx.pid --lock-path=/var/lock/nginx.lock --error-log-path=/var/log/nginx/error.log --http-log-path=/var/log/nginx/access.log --user=www-data --group=www-data')
         sudo('make && make install')
 
     # copying nginx and uwsgi configuration files
-    put('config/nginx.conf', '/etc/nginx/', use_sudo=True)
+   
+    put('config/nginx-site-example.conf', '/etc/nginx/sites-available/%s' % site, use_sudo=True) 
+    with cd('/etc/nginx/sites-enabled'):
+        sudo('ln -s ../sites-available/%s .' % site)
+
     put('config/uwsgi.conf', '/etc/supervisor/conf.d/', use_sudo=True)
 
     # installing pixman
@@ -127,4 +122,5 @@ def graphite_install():
     sudo('chown -R www-data: /opt/graphite/')
 
     # starting nginx
-    sudo('nginx')
+    sudo('/etc/init.d/nginx configtest')
+    sudo('/etc/init.d/nginx reload')
